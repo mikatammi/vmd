@@ -63,7 +63,7 @@ distclean: clean
 	make distclean -C test/auth
 	rm -rf $(RUST_SERVER_API)
 	rm -rf $(RUST_CLIENT_API)
-	rm openapitools.json
+	# rm openapitools.json
 
 # Rebuild everything.
 re: distclean all
@@ -94,13 +94,14 @@ $(CERTS):
 
 # Simple test using custom client.
 test-client:
-	cargo run -p mtls-client -- \
-		list \
+	cargo run -p vmd-client -- \
 		--port $(PORT) \
 		--cacert $(CA_CERT) \
 		--cert $(CLIENT_CHAIN) \
 		--key $(CLIENT_KEY) \
-		--hostname $(HOSTNAME)
+		--hostname $(HOSTNAME) \
+		--output yaml \
+		list
 
 test-curl-client:
 	curl --tlsv1.3 \
