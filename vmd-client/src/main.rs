@@ -8,7 +8,14 @@ use std::path::Path;
 use vmd_rust_client_api::{
     apis::configuration::Configuration,
     apis::vm_api::{get_vm_info_by_id, get_vm_list, vm_action},
+	apis::Error as ApiError,
+	models::ErrorModel,
 };
+use serde_json::json;
+
+mod cli;
+
+use cli::*;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -18,25 +25,10 @@ pub enum Error {
     Http(#[from] reqwest::Error),
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
+	#[error("YAML error: {0}")]
+	Yaml(#[from] serde_yaml::Error),
     #[error("API error: {0}")]
     Api(String),
-}
-
-#[derive(Debug, clap::Parser)]
-#[command(author, about, version)]
-struct Args {
-    #[clap(value_enum, required = true)]
-    operation: String,
-    #[clap(short, long, required = true)]
-    port: u16,
-    #[clap(long, required = true)]
-    cacert: std::path::PathBuf,
-    #[clap(long, required = true)]
-    key: std::path::PathBuf,
-    #[clap(long, required = true)]
-    cert: std::path::PathBuf,
-    #[clap(long, required = true)]
-    hostname: String,
 }
 
 async fn read_pem(file: &Path) -> Result<Vec<u8>, Error> {
@@ -48,13 +40,35 @@ async fn read_pem(file: &Path) -> Result<Vec<u8>, Error> {
     Ok(buf)
 }
 
+async fn print_output(result: Result<serde_json::Value, ApiError<ErrorModel>>, format: cli::OutputFormat) -> Result<(), Error> {
+	match result {
+		Ok(v) => {
+			match format {
+				cli::OutputFormat::Json => {
+					println!("{}", serde_json::to_string_pretty(&v)?);
+				}
+				cli::OutputFormat::Yaml => {
+					println!("{}", serde_yaml::to_string(&v)?);
+				}
+				cli::OutputFormat::Text => {
+					println!("{}", v);
+				}
+			}
+		}
+		Err(e) => {
+			println!("{}", e);
+		}
+	}
+	Ok(())
+}
+
 async fn run_client() -> Result<(), Error> {
-    let args = Args::parse();
+    let args = Cli::parse();
 
     info!("{:#?}", args);
-    let certs = read_pem(&args.cert).await?;
+    let certs = read_pem(&args.global.connection.cert).await?;
     let certs = ReqwestIdentity::from_pem(&certs)?;
-    let cacert = read_pem(&args.cacert).await?;
+    let cacert = read_pem(&args.global.connection.cacert).await?;
     let cacert = ReqwestCertificate::from_pem(&cacert)?;
     let client = ReqwestClient::builder()
         .use_rustls_tls()
@@ -64,22 +78,27 @@ async fn run_client() -> Result<(), Error> {
         .https_only(true)
         .build()?;
 
-    let base_path = format!("https://{}:{}/api/v1", args.hostname, args.port);
+    let mut config = Configuration::new();
+    config.base_path = format!("https://{}:{}/api/v1", args.global.connection.hostname, args.global.connection.port);
+    config.client = client;
 
-    // Concatenate path from `operation` argument and call corresponding API
-    let path = format!("{}/{}", base_path, args.operation);
-
-    println!("Path: {}", path);
-
-    // make a call to the path
-    let res = client.get(&path).send().await?;
-
-    println!("Response: {:?}", res);
-
-    // Print the response body as text
-    let body = res.text().await?;
-
-    println!("Body: {}", body);
+    match args.operation {
+		cli::Operation::List => {
+			let vms = get_vm_list(&config).await.unwrap();
+			print_output(Ok(json!(vms)), args.global.output).await?;
+		}
+		cli::Operation::Info { id } => {
+			let id = json!(id);
+			let vm = get_vm_info_by_id(&config, id).await.unwrap();
+			print_output(Ok(json!(vm)), args.global.output).await?;
+		}
+		cli::Operation::Action { id, action } => {
+			let id = json!(id);
+			let action = json!(action);
+			let vm = vm_action(&config, id, action).await.unwrap();
+			print_output(Ok(json!(vm)), args.global.output).await?;
+		}
+	}
     Ok(())
 }
 
