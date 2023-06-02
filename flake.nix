@@ -39,6 +39,9 @@
         packages.vmd-rust-client-api = nixpkgs.legacyPackages.${system}.callPackage ./vmd-api {
           apiType = "client";
         };
+        packages.vmd-server = nixpkgs.legacyPackages.${system}.callPackage ./vmd-server {
+          vmd-rust-server-api = self.packages.${system}.vmd-rust-server-api;
+        };
 
         formatter = nixpkgs.legacyPackages.${system}.alejandra;
       }
